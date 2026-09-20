@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Chat</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#191919;color:#eee;font:14px Consolas,monospace}.app{height:100vh;height:100dvh;display:grid;grid-template-columns:1fr 250px;grid-template-rows:1fr auto}.main{padding:18px;display:flex;flex-direction:column;min-width:0}.head{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #444;padding-bottom:12px}.brand{font-size:24px}.status{color:#999}.online{color:#46c864}.messages{flex:1;overflow:auto;padding:12px 0}.msg{padding:7px 2px;overflow-wrap:anywhere}.name{color:#00aeef}.system{color:#aaa}.sidebar{grid-row:1/3;grid-column:2;background:#252525;border-left:1px solid #454545;padding:16px;overflow:auto}.users-title{font-size:18px;margin-bottom:12px}.user{padding:7px;border-bottom:1px solid #333}.composer{padding:12px 18px calc(12px + env(safe-area-inset-bottom,0px));border-top:1px solid #444;display:grid;grid-template-columns:1fr auto;gap:8px}.composer input[type=text],.login input{background:#2d2d2d;border:1px solid #595959;color:#fff;padding:11px}.btn{border:1px solid #555;background:#303030;color:#eee;padding:10px 14px;cursor:pointer}.btn.primary{background:#00aeef;color:#06141a}.overlay{position:fixed;inset:0;background:#191919;display:grid;place-items:center;z-index:10}.card{width:400px;max-width:90vw;background:#252525;border:1px solid #555;padding:18px}.login input{width:100%;margin:10px 0}.hint{color:#aaa;font-size:12px;line-height:1.5}.error{color:#ff7b7b}@media(max-width:700px){body{font-size:16px}.app{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) auto 150px}.main{padding:12px}.sidebar{grid-column:1;grid-row:3;padding:10px}.composer{grid-row:2;padding-left:10px;padding-right:10px}.composer input[type=text]{min-width:0;font-size:16px}.btn{min-height:44px;font-size:16px}.card{width:calc(100vw - 24px)}.login input{font-size:16px;min-height:44px}}
+</style>
+</head>
+<body>
+<div class="app">
+ <main class="main"><div class="head"><div><div class="brand">Writers Jumbler Chat</div><div id="status" class="status">Not connected</div></div><div class="hint">Live chat<br>No message history</div></div><div id="messages" class="messages"></div></main>
+ <aside class="sidebar"><div class="users-title">USERS <span id="count">0 / 100</span></div><div id="users"></div></aside>
+ <form id="composer" class="composer"><input id="message" type="text" maxlength="500" autocomplete="off" placeholder="Type message..."><button class="btn primary">SEND</button></form>
+</div>
+<div id="setup" class="overlay"><div class="card login"><h2>Join Chat</h2><div id="configError" class="error"></div><input id="username" maxlength="24" placeholder="Username"><button id="joinBtn" class="btn primary">JOIN CHAT</button></div></div>
+<script>
+const SUPABASE_URL='GETthisWITHsupabase.com';
+const SUPABASE_PUBLISHABLE_KEY='comesWITHsigningUPsupabase.COM';
+const ROOM='writers-jumbler-main';
+const MAX_USERS=100,MAX_MESSAGE=500;
+const $=s=>document.querySelector(s);let sb=null,channel=null,username='',joined=false;
+function addText(name,text,system=false){const d=document.createElement('div');d.className='msg '+(system?'system':'');const n=document.createElement('span');n.className='name';n.textContent=system?'System':name;d.append(n,document.createTextNode(': '+String(text)));$('#messages').append(d);scrollBottom()}
+function scrollBottom(){$('#messages').scrollTop=$('#messages').scrollHeight}
+function renderUsers(){if(!channel)return 0;const state=channel.presenceState(),map=new Map();for(const entries of Object.values(state))for(const p of entries)if(p?.session_id&&p?.username)map.set(p.session_id,String(p.username).slice(0,24));const list=[...map.entries()].sort((a,b)=>a[1].localeCompare(b[1])).slice(0,MAX_USERS);$('#users').replaceChildren();for(const[,name]of list){const d=document.createElement('div');d.className='user';d.textContent=name;$('#users').append(d)}$('#count').textContent=`${list.length} / ${MAX_USERS}`;return list.length}
+async function join(){if(joined)return;$('#configError').textContent='';username=$('#username').value.trim().slice(0,24);if(!username)return;const{createClient}=supabase;sb=createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);const sessionId=(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2));channel=sb.channel(ROOM,{config:{broadcast:{ack:true,self:true},presence:{key:sessionId}}});channel.on('broadcast',{event:'chat'},({payload})=>{if(payload?.username&&payload?.message)addText(String(payload.username).slice(0,24),String(payload.message).slice(0,MAX_MESSAGE))}).on('presence',{event:'sync'},renderUsers).on('presence',{event:'join'},renderUsers).on('presence',{event:'leave'},renderUsers).subscribe(async (status,err)=>{if(status==='SUBSCRIBED'){if(renderUsers()>=MAX_USERS){$('#configError').textContent='Chat room is full.';await sb.removeChannel(channel);return}await channel.track({username,session_id:sessionId,online_at:new Date().toISOString()});joined=true;$('#setup').style.display='none';$('#status').textContent='Online as '+username;$('#status').classList.add('online')}else if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED'){$('#configError').textContent='Realtime: '+status+(err?.message?' - '+err.message:'');}})}
+$('#joinBtn').onclick=join;$('#username').onkeydown=e=>{if(e.key==='Enter')join()};$('#composer').onsubmit=async e=>{e.preventDefault();const input=$('#message'),text=input.value.trim().slice(0,MAX_MESSAGE);if(!joined||!text)return;const result=await channel.send({type:'broadcast',event:'chat',payload:{username,message:text}});if(result==='ok')input.value='';else addText('','Message failed to send',true)};window.addEventListener('beforeunload',()=>{if(channel)channel.untrack()});
+</script>
+</body>
+</html>
